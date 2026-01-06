@@ -1,0 +1,238 @@
+--app.py------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+from flask import Flask, render_template, redirect, url_for, flash, request
+from flask_sqlalchemy import SQLAlchemy
+from flask_login import UserMixin, login_user, LoginManager, login_required, logout_user, current_user
+from wtforms import StringField, PasswordField, SubmitField
+from wtforms.validators import InputRequired, Length, ValidationError, Email
+from flask_wtf import FlaskForm
+from flask_bcrypt import Bcrypt
+
+
+app = Flask(__name__)
+app.config['SECRET_KEY'] = 'your_secret_key'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///site.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+bcrypt = Bcrypt(app)
+
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = 'login'  # redirect here if @login_required fails
+
+
+db = SQLAlchemy(app)
+
+
+class User(db.Model, UserMixin):
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(150), unique=True, nullable=False)
+    email = db.Column(db.String(150), unique=True, nullable=False)
+    password = db.Column(db.String(150), nullable=False)
+
+@login_manager.user_loader
+def load_user(user_id):
+    return User.query.get(int(user_id))
+
+class RegisterForm(FlaskForm):
+    username = StringField(
+        "Username",
+        validators=[InputRequired(), Length(min=4, max=150)],
+        render_kw={"placeholder": "Username"}
+    )
+    email = StringField(
+        "Email",
+        validators=[InputRequired(), Email(), Length(min=4, max=150)],
+        render_kw={"placeholder": "Email"}
+    )
+    password = PasswordField(
+        "Password",
+        validators=[InputRequired(), Length(min=8, max=150)],
+        render_kw={"placeholder": "Password"}
+    )
+    submit = SubmitField("Register")
+
+    def validate_username(self, username):
+        user = User.query.filter_by(username=username.data).first()
+        if user:
+            raise ValidationError('Username already exists. Please choose a different one.')
+
+    def validate_email(self, email):
+        user = User.query.filter_by(email=email.data).first()
+        if user:
+            raise ValidationError('Email already exists. Please choose a different one.')
+
+class LoginForm(FlaskForm):
+    username = StringField(
+        "Username",
+        validators=[InputRequired(), Length(min=4, max=150)],
+        render_kw={"placeholder": "Username"}
+    )
+    password = PasswordField(
+        "Password",
+        validators=[InputRequired(), Length(min=8, max=150)],
+        render_kw={"placeholder": "Password"}
+    )
+    submit = SubmitField("Login")
+
+@app.route('/')
+def home():
+    return render_template('home.html')
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    form = LoginForm()
+    if form.validate_on_submit():
+        user = User.query.filter_by(username=form.username.data).first()
+        if user and bcrypt.check_password_hash(user.password, form.password.data):
+            login_user(user)
+            next_page = request.args.get('next')
+            return redirect(next_page) if next_page else redirect(url_for('dashboard'))
+        else:
+            flash("Invalid username or password", "danger")
+    return render_template('login.html', form=form)
+
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    form = RegisterForm()
+    if form.validate_on_submit():
+        hashed_password = bcrypt.generate_password_hash(form.password.data).decode('utf-8')
+        new_user = User(username=form.username.data, email=form.email.data, password=hashed_password)
+        db.session.add(new_user)
+        db.session.commit()
+        flash("Account created successfully! You can now log in.", "success")
+        return redirect(url_for('login'))
+    return render_template('register.html', form=form)
+
+@app.route('/dashboard')
+@login_required
+def dashboard():
+    return render_template('user_dashboard.html', name=current_user.username)
+
+@app.route('/logout')
+@login_required
+def logout():
+    logout_user()
+    flash("You have been logged out.", "info")
+    return redirect(url_for('login'))
+
+if __name__ == '__main__':
+    with app.app_context():
+        db.create_all()
+    app.run(debug=True)
+
+--home.html---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+<!DOCTYPE html>
+
+<html lang="en">
+
+    <head>
+        
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Live Happy</title>
+
+        <!-- Google Fonts: Lobster -->
+        <link rel="preconnect" href="https://fonts.googleapis.com">
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link href="https://fonts.googleapis.com/css2?family=Lobster&display=swap" rel="stylesheet">
+
+    </head>
+
+    <body>
+
+        <h1>Welcome to home!</h1>
+        <a href="{{url_for('login')}}">Login Page</a><br>
+        <a href="{{url_for('register')}}">Register Page</a><br>
+
+    </body>
+
+
+</html>
+
+--login.html--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+<!DOCTYPE html>
+<html>
+  <head>
+
+    <title>Login</title>
+
+  </head>
+
+  <body>
+
+    <h2>Login</h2>
+    <a href="{{url_for('register')}}"> Dont have an account? Sign up</a><br>
+
+    <form method="POST" action="{{ url_for('login') }}">
+        {{ form.hidden_tag() }}
+        <p>{{ form.username.label }}<br>{{ form.username }}</p>
+        <p>{{ form.password.label }}<br>{{ form.password }}</p>
+        <p>{{ form.submit }}</p>
+    </form>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, message in messages %}
+          <div class="{{ category }}">{{ message }}</div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+
+  </body>
+  
+</html>
+
+--register.html-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+<!DOCTYPE html>
+<html>
+  <head>
+
+    <title>Register</title>
+    
+  </head>
+
+  <body>
+
+    <h2>Register</h2>
+            <a href="{{url_for('login')}}">Already have and account? Login</a><br>
+
+    <form method="POST" action="{{ url_for('register') }}">
+        {{ form.hidden_tag() }}
+        <p>{{ form.username.label }}<br>{{ form.username }}</p>
+        <p>{{ form.email.label }}<br>{{ form.email }}</p>
+        <p>{{ form.password.label }}<br>{{ form.password }}</p>
+        <p>{{ form.submit }}</p>
+    </form>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, message in messages %}
+          <div class="{{ category }}">{{ message }}</div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+    
+  </body>
+
+</html>
+
+--dashboard.html----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+<!DOCTYPE html>
+
+<html lang="en">
+
+    <head>
+
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Dashboard</title>
+
+    </head>
+        <h1>Hello you are Login.</h1>
+
+        <a href="{{url_for('logout')}}">Press here to logout</a>
+        
+    <body>
+    
+    </body>
+</html>
